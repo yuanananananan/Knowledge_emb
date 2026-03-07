@@ -1,0 +1,22 @@
+.idea/
+data/
+img/
+model_ckp/
+logs/
+upload_test/
+
+__pycache__/
+*.pyc
+
+# image 
+*.png
+*.jpg
+*.json
+# 
+*.zip
+*.tar
+*.7z
+/.vscode
+feature_sel/
+runs/
+/docker_mount
