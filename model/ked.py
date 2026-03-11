@@ -3,7 +3,7 @@ import torch.nn as nn
 import math
 import torch.nn.functional as F
 from .attention import CBAM, GNN, cross_encoder
-from .unit_knowledge import Unit_KED, Knowledge_emb
+from .unit_knowledge import Unit_KED, Knowledge_emb, ResNet1D
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -135,7 +135,7 @@ class KED(nn.Module):
             nn.Conv2d(128, 64, kernel_size=1, stride=1, bias=False),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True))
-        self.gnn = GNN(256, 64)
+        self.res1d = ResNet1D(in_channels=1, out_channels=128, layers=[2, 2, 2])
 
         self.kemb = Knowledge_emb(64)
         self.unit_kd = Unit_KED(64, 64, layer_nums=4, knn_nums=8)
@@ -200,10 +200,8 @@ class KED(nn.Module):
         return [256, 512, 1024, 2048]
 
     def forward(self, x, otra_feat):
-        feature = torch.stack(otra_feat, dim=0)
-        B, C, _ = feature.shape
-        feature = feature.view(B, C, 32, 32)
-        feature, kemb_loss = self.kemb(feature)
+        feature = otra_feat.unsqueeze(1)  # [B, 1, n]
+        gnn_x = self.res1d(feature)
 
         x = self.conv1(x)
         x = self.bn1(x)
@@ -212,12 +210,13 @@ class KED(nn.Module):
         x = self.maxpool(x)
 
         feat1 = self.layer1(x)
-        gnn_x = self.unit_kd(feature, feat1)
-        gnn_x = self.gnn_conv(gnn_x)
+
+        # gnn_x = self.unit_kd(feature, feat1)
+        # gnn_x = self.gnn_conv(gnn_x)
         # feat1 = feat1 + nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False)(encoded_list[0])
 
-        feat2 = self.layer2(feat1)
-        feat3 = self.layer3(feat2) + gnn_x
+        feat2 = self.layer2(feat1) + gnn_x.unsqueeze(-1)
+        feat3 = self.layer3(feat2)
         # feat3 = (deep_x) + _feat3
         feat4 = self.layer4(feat3)
 
@@ -238,6 +237,5 @@ class KED(nn.Module):
             F.relu(feat4),
         ]
         feats["preact_feats"] = [stem, feat1, feat2, feat3, feat4]
-        feats["kemb_loss"] = kemb_loss
 
         return out, feats

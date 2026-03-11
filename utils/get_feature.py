@@ -16,6 +16,10 @@ from skimage.transform import resize
 import torch
 import torch.nn.functional as F
 
+import utils.MultiFeaturesExtractorSAR as sar_extractor
+import utils.MultiFeaturesExtractorMon as mon_extractor
+import utils.MultiFeaturesExtractorRD as rd_extractor
+
 feature_name = [
     # 统计域 : rms
     # 时频域：wavelet
@@ -24,6 +28,7 @@ feature_name = [
 
 
 def get_statis_feat(data, k=7, s=4, p=3):
+    data = cv2.resize(data, (32, 32))
     h, w = data.shape
 
     data = np.pad(data, pad_width=p, mode='constant', constant_values=0)
@@ -50,6 +55,7 @@ def get_statis_feat(data, k=7, s=4, p=3):
 
 
 def get_time_freq_feat(data, level=2):
+    data = cv2.resize(data, (32, 32))
     coeffs = pywt.wavedec2(data, 'haar', level=level)
     ll = coeffs[0]
     high_lv_bands = [c for c in coeffs[1]]  # 只获取最高级别频带
@@ -68,6 +74,7 @@ def get_spatial_feat(data):
     垂直方向block数 = (win_height - block_height)/block_stride + 1
     总特征数 = 每个block的特征数 * 水平block数 * 垂直block数
     '''
+    data = cv2.resize(data, (32, 32))
 
     # assert data.shape[0] == 64
     h, w = data.shape
@@ -75,7 +82,7 @@ def get_spatial_feat(data):
     data = data.astype(np.uint8)
     data = np.log1p(data).astype(np.uint8)
     nbins = 9
-    hog = cv2.HOGDescriptor((h, w), (16, 16), (16, 16), (4, 4), nbins)
+    hog = cv2.HOGDescriptor((h, w), (16, 16), (16, 16), (8, 8), nbins)
 
     # 总特征数 = 9 * (16/8)^2 * ((64-16)/16+1)^2 = 9*4*4*4 = 9 * 64
     hog_features = hog.compute(data)
@@ -85,16 +92,59 @@ def get_spatial_feat(data):
 
 
 def get_outra_feature(data, cfg):
-
-    # hog_features = get_spatial_feat(data)
-    # statis_feat = get_statis_feat(data)
-    # time_freq_features = get_time_freq_feat(data)
+    """
+    安全地从配置中提取特征
+    
+    Args:
+        data: 输入数据
+        cfg: 配置字典，包含 'feature_combinations' 键
+    
+    Returns:
+        特征列表
+    """
     feat = []
-    for fun in cfg['feature_combinations']:
-        feat.append(eval(fun)(data))
-    # for f in feat:
-    #     print(f.shape)
-    # exit(0)
+    H, W = data.shape
+    for fun_name in cfg['feature_combinations']:
+        # 从当前模块的全局命名空间中查找函数
+        func = globals().get(fun_name)
+
+        # 检查函数是否存在
+        if func is not None:
+            data = data.reshape(H, W)
+        else:
+            # 调用外部优选特征
+            mode = cfg['data']['mode']
+            assert mode in ['RD', 'SAR', 'MON']
+            if mode == 'SAR':
+                func = getattr(sar_extractor, fun_name, None)
+                data = data.reshape(1, H, W, 1)
+            elif mode == 'RD':
+                func = getattr(rd_extractor, fun_name, None)
+                data = data.reshape(1, 1, H, W, 1)
+            elif mode == 'MON':
+                func = getattr(mon_extractor, fun_name, None)
+                data = data.reshape(1, H, W, 1)
+            if func is None:
+                print(f"Warning: Function '{fun_name}' not found in current module. Skipping.")
+                continue
+
+        # 检查是否可调用
+        if not callable(func):
+            print(f"Warning: '{fun_name}' is not callable. Skipping.")
+            continue
+
+        try:
+            result = func(data)
+            if not isinstance(result, np.ndarray):
+                result = np.array(result)
+
+            result_flat = result.flatten()
+            feat.extend(result_flat.tolist()[:256])  # 只取前256个特征
+
+        except Exception as e:
+            print(f"Error calling function '{fun_name}': {str(e)}")
+            continue
+    feat = np.array(feat).astype(np.float32)
 
     return feat
 

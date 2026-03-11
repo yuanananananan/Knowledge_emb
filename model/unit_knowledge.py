@@ -198,3 +198,102 @@ class Base_GNN_block(nn.Module):
         for i in range(self.n_blocks):
             x = self.backbone[i](x)
         return x
+
+
+class ResidualBlock1D(nn.Module):
+    """1D残差块"""
+
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+        super(ResidualBlock1D, self).__init__()
+
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm1d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+
+        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm1d(out_channels)
+
+        self.downsample = downsample
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+
+
+class ResNet1D(nn.Module):
+    """
+    1D ResNet模型，将[B,1,512]编码为[B,C,1]
+    
+    Args:
+        in_channels: 输入通道数，默认为1
+        out_channels: 输出通道数C（特征维度）
+        layers: 每个阶段的残差块数量
+    """
+
+    def __init__(self, in_channels=1, out_channels=256, layers=[2, 2, 2]):
+        super(ResNet1D, self).__init__()
+
+        # 初始卷积层
+        self.conv1 = nn.Conv1d(in_channels, 16, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm1d(16)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool1d(kernel_size=3, stride=2, padding=1)
+
+        self.layer1 = self._make_layer(16, 64, layers[0], stride=1)
+        self.layer2 = self._make_layer(64, 128, layers[1], stride=2)
+        self.layer3 = self._make_layer(128, out_channels, layers[2], stride=2)
+
+        self.adaptive_pool = nn.AdaptiveAvgPool1d(1)
+
+        # 初始化权重
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def _make_layer(self, in_channels, out_channels, blocks, stride=1):
+        downsample = None
+        if stride != 1 or in_channels != out_channels:
+            downsample = nn.Sequential(
+                nn.Conv1d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm1d(out_channels),
+            )
+
+        layers = []
+        layers.append(ResidualBlock1D(in_channels, out_channels, stride, downsample))
+
+        for _ in range(1, blocks):
+            layers.append(ResidualBlock1D(out_channels, out_channels))
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.conv1(x)  # [B, 64, 256]
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)  # [B, 64, 128]
+
+        x = self.layer1(x)  # [B, 64, 128]
+        x = self.layer2(x)  # [B, 128, 64]
+        x = self.layer3(x)  # [B, 256, 64]
+
+        x = self.adaptive_pool(x)  # [B, num_classes, 1]
+        x.view(x.size(0), -1)
+
+        return x

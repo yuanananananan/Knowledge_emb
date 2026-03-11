@@ -113,7 +113,6 @@ class RD_Dataset(Dataset):
             img = cv2.resize(img, (128, 128))
             data = img.astype(np.float32) / 255.
             feature = get_outra_feature(data, self.cfg)
-            feature = np.concatenate(feature, axis=0)
             img = self.transform(img)
             img = img.repeat(3, 1, 1).float()
         return img, label, feature

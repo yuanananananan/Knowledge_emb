@@ -103,7 +103,6 @@ class SAR_Dataset(Dataset):
             # img_32 = cv2.resize(np.array(img), (64, 64))
             data = img.astype(np.float32) / 255.
             feature = get_outra_feature(data, self.cfg)
-            feature = np.concatenate(feature, axis=0)
             img = self.transform(img)
             img = img.repeat(3, 1, 1).float()
         return img, label, feature

@@ -21,7 +21,7 @@ def train_step(model, im, label, feature, criterion, is_ked):
     model.train()
     im = im.cuda()
     label = label.cuda()
-    feature = [f.cuda() for f in feature]
+    feature = feature.cuda()
 
     if is_ked:
         result, feats = model(im, feature)
@@ -38,7 +38,7 @@ def val_step(model, im, label, feature, criterion, is_ked):
         model.eval()
         im = im.cuda()
         label = label.cuda()
-        feature = [f.cuda() for f in feature]
+        feature = feature.cuda()
 
         if is_ked:
             result, feats = model(im, feature)
